@@ -206,11 +206,7 @@ search_repo() {
             print_color "$score_color" "${BOLD}#$count [Score: $score]${NC}"
             echo -e "  $icon  $rel_path"
             
-            if [[ $content_score -gt 0 ]]; then
-                print_color "$BLUE" "     └─ Path match: $path_score | Content match: $content_score"
-            else
-                print_color "$BLUE" "     └─ Path match: $path_score"
-            fi
+            print_color "$BLUE" "     └─ Path match: $path_score | Content match: $content_score"
             echo ""
         done < "$sorted_file"
         
