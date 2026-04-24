@@ -64,8 +64,8 @@ calculate_score() {
             ((score += 10))
         fi
         
-        # Check for fuzzy matches (substring matching)
-        if echo "$basename_lower" | grep -iq "$(echo $keyword_lower | sed 's/./&.*/g')"; then
+        # Stricter fuzzy match (prefix/word-boundary instead of loose regex)
+        if echo "$basename_lower" | grep -iq "\b$keyword_lower"; then
             ((score += 15))
         fi
     done
@@ -157,10 +157,16 @@ search_repo() {
     grep -v '/__pycache__/' | \
     grep -v '/dist/' | \
     grep -v '/build/' | \
-    grep -v '/target/' | while read -r path; do
+    grep -v '/target/' | \
+    grep -v "$(basename "$0")" | while read -r path; do
         
         # Calculate path score
         local path_score=$(calculate_score "$path" "${keywords[@]}")
+
+        # Skip weak/noisy matches early
+        if [[ $path_score -lt 15 ]]; then
+            continue
+        fi
         
         # Calculate content score for files
         local content_score=0
@@ -175,16 +181,6 @@ search_repo() {
         fi
     done
     
-    # DEBUG: Show temp file info
-    echo "DEBUG: Temp file location: $temp_results" >&2
-    echo "DEBUG: Temp file exists: $(test -f "$temp_results" && echo yes || echo no)" >&2
-    echo "DEBUG: Temp file size: $(wc -l < "$temp_results" 2>/dev/null || echo 0) lines" >&2
-    if [[ -s "$temp_results" ]]; then
-        echo "DEBUG: First 5 lines:" >&2
-        head -5 "$temp_results" >&2
-    fi
-    echo "" >&2
-    
     # Sort by score and display results
     if [[ -s "$temp_results" ]]; then
         print_color "$GREEN" "${BOLD}📊 Top Results (sorted by relevance):${NC}\n"
@@ -195,7 +191,7 @@ search_repo() {
         
         local count=0
         while IFS='|' read -r score path path_score content_score; do
-            ((count++))
+            ((++count))
             local icon=$(get_icon "$path")
             local rel_path=${path#$start_dir/}
             
