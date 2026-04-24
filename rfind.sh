@@ -16,7 +16,7 @@ NC='\033[0m' # No Color
 BOLD='\033[1m'
 
 # Configuration
-MIN_SCORE=0
+MIN_SCORE=5
 MAX_RESULTS=20
 SEARCH_DEPTH=10
 
@@ -33,13 +33,13 @@ calculate_score() {
     shift
     local keywords=("$@")
     local score=0
-    local path_lower=$(echo "$path" | tr '[:upper:]' '[:lower:]')
+    local path_lower=$(echo "$path" | tr '[:upper:]' '[:lower:]' | tr '_' ' ')
     
     # Split path into components
     local basename=$(basename "$path")
     local dirname=$(dirname "$path")
-    local basename_lower=$(echo "$basename" | tr '[:upper:]' '[:lower:]')
-    local dirname_lower=$(echo "$dirname" | tr '[:upper:]' '[:lower:]')
+    local basename_lower=$(echo "$basename" | tr '[:upper:]' '[:lower:]' | tr '_' ' ')
+    local dirname_lower=$(echo "$dirname" | tr '[:upper:]' '[:lower:]' | tr '_' ' ')
     
     for keyword in "${keywords[@]}"; do
         local keyword_lower=$(echo "$keyword" | tr '[:upper:]' '[:lower:]')
@@ -65,7 +65,7 @@ calculate_score() {
         fi
         
         # Check for fuzzy matches (substring matching)
-        if echo "$basename_lower" | grep -q "$(echo $keyword_lower | sed 's/./&.*/g')"; then
+        if echo "$basename_lower" | grep -iq "$(echo $keyword_lower | sed 's/./&.*/g')"; then
             ((score += 15))
         fi
     done
@@ -98,9 +98,9 @@ search_file_content() {
     local content_score=0
     
     # Only search text files, skip binaries
-    if file "$file" 2>/dev/null | grep -q "text"; then
+    if file "$file" 2>/dev/null | grep -qi "text"; then
         for keyword in "${keywords[@]}"; do
-            local count=$(grep -io "$keyword" "$file" 2>/dev/null | wc -l)
+            local count=$(grep -iow "$keyword" "$file" 2>/dev/null | wc -l)
             # Diminishing returns for repetition
             if [[ $count -gt 0 ]]; then
                 ((content_score += 10 + count * 2))
@@ -150,15 +150,14 @@ search_repo() {
     local temp_results=$(mktemp)
     
     # Find all files and directories
-    find "$start_dir" -maxdepth "$SEARCH_DEPTH" \
-        -not -path "*/\.*" \
-        -not -path "*/node_modules/*" \
-        -not -path "*/venv/*" \
-        -not -path "*/__pycache__/*" \
-        -not -path "*/dist/*" \
-        -not -path "*/build/*" \
-        -not -path "*/target/*" \
-        2>/dev/null | while read -r path; do
+    find "$start_dir" -maxdepth "$SEARCH_DEPTH" 2>/dev/null | \
+    grep -v '/\.' | \
+    grep -v '/node_modules/' | \
+    grep -v '/venv/' | \
+    grep -v '/__pycache__/' | \
+    grep -v '/dist/' | \
+    grep -v '/build/' | \
+    grep -v '/target/' | while read -r path; do
         
         # Calculate path score
         local path_score=$(calculate_score "$path" "${keywords[@]}")
@@ -176,12 +175,26 @@ search_repo() {
         fi
     done
     
+    # DEBUG: Show temp file info
+    echo "DEBUG: Temp file location: $temp_results" >&2
+    echo "DEBUG: Temp file exists: $(test -f "$temp_results" && echo yes || echo no)" >&2
+    echo "DEBUG: Temp file size: $(wc -l < "$temp_results" 2>/dev/null || echo 0) lines" >&2
+    if [[ -s "$temp_results" ]]; then
+        echo "DEBUG: First 5 lines:" >&2
+        head -5 "$temp_results" >&2
+    fi
+    echo "" >&2
+    
     # Sort by score and display results
     if [[ -s "$temp_results" ]]; then
-        local count=0
         print_color "$GREEN" "${BOLD}📊 Top Results (sorted by relevance):${NC}\n"
         
-        sort -t'|' -k1 -rn "$temp_results" | head -n "$MAX_RESULTS" | while IFS='|' read -r score path path_score content_score; do
+        # Create sorted file
+        local sorted_file=$(mktemp)
+        sort -t'|' -k1 -rn "$temp_results" | head -n "$MAX_RESULTS" > "$sorted_file"
+        
+        local count=0
+        while IFS='|' read -r score path path_score content_score; do
             ((count++))
             local icon=$(get_icon "$path")
             local rel_path=${path#$start_dir/}
@@ -203,9 +216,12 @@ search_repo() {
                 print_color "$BLUE" "     └─ Path match: $path_score"
             fi
             echo ""
-        done
+        done < "$sorted_file"
         
-        print_color "$MAGENTA" "\n✨ Found $(wc -l < "$temp_results") total matches, showing top $count"
+        rm -f "$sorted_file"
+        
+        local total_matches=$(wc -l < "$temp_results")
+        print_color "$MAGENTA" "\n✨ Found $total_matches total matches, showing top $count"
     else
         print_color "$RED" "❌ No matches found for: ${keywords[*]}"
     fi
